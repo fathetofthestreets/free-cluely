@@ -24,13 +24,18 @@ export class ProcessingHelper {
     const ollamaModel = process.env.OLLAMA_MODEL // Don't set default here, let LLMHelper auto-detect
     const ollamaUrl = process.env.OLLAMA_URL || "http://localhost:11434"
     
+    const openRouterApiKey = process.env.OPENROUTER_API_KEY
+
     if (useOllama) {
       console.log("[ProcessingHelper] Initializing with Ollama")
       this.llmHelper = new LLMHelper(undefined, true, ollamaModel, ollamaUrl)
+    } else if (openRouterApiKey) {
+      console.log("[ProcessingHelper] Initializing with OpenRouter")
+      this.llmHelper = new LLMHelper(undefined, false, undefined, undefined, openRouterApiKey)
     } else {
       const apiKey = process.env.GEMINI_API_KEY
       if (!apiKey) {
-        throw new Error("GEMINI_API_KEY not found in environment variables. Set GEMINI_API_KEY or enable Ollama with USE_OLLAMA=true")
+        throw new Error("No API key found in environment variables. Set GEMINI_API_KEY, OPENROUTER_API_KEY, or enable Ollama with USE_OLLAMA=true")
       }
       console.log("[ProcessingHelper] Initializing with Gemini")
       this.llmHelper = new LLMHelper(apiKey, false)
