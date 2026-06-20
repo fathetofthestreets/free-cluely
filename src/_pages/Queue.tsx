@@ -203,13 +203,14 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     setIsSettingsOpen(!isSettingsOpen)
   }
 
-  const handleModelChange = (provider: "ollama" | "gemini", model: string) => {
+  const handleModelChange = (provider: "ollama" | "gemini" | "openrouter", model: string) => {
     setCurrentModel({ provider, model })
     // Update chat messages to reflect the model change
-    const modelName = provider === "ollama" ? model : "Gemini 3 Pro"
+    const modelName = provider === "ollama" ? model : provider === "openrouter" ? model : "Gemini 3 Pro"
+    const icon = provider === "ollama" ? "🏠" : provider === "openrouter" ? "🌐" : "☁️"
     setChatMessages((msgs) => [...msgs, { 
       role: "gemini", 
-      text: `🔄 Switched to ${provider === "ollama" ? "🏠" : "☁️"} ${modelName}. Ready for your questions!` 
+      text: `🔄 Switched to ${icon} ${modelName}. Ready for your questions!` 
     }])
   }
 
@@ -256,7 +257,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
             <div className="flex-1 overflow-y-auto mb-3 p-3 rounded-lg bg-white/10 backdrop-blur-md max-h-64 min-h-[120px] glass-content border border-white/20 shadow-lg">
               {chatMessages.length === 0 ? (
                 <div className="text-sm text-gray-600 text-center mt-8">
-                  💬 Chat with {currentModel.provider === "ollama" ? "🏠" : "☁️"} {currentModel.model}
+                  💬 Chat with {currentModel.provider === "ollama" ? "🏠" : currentModel.provider === "openrouter" ? "🌐" : "☁️"} {currentModel.model}
                   <br />
                   <span className="text-xs text-gray-500">Take a screenshot (Cmd+H) for automatic analysis</span>
                   <br />

@@ -9,13 +9,25 @@ interface OllamaResponse {
 export class LLMHelper {
   private model: GenerativeModel | null = null
   private readonly systemPrompt = `You are Wingman AI, a helpful, proactive assistant for any kind of problem or situation (not just coding). For any user input, analyze the situation, provide a clear problem statement, relevant context, and suggest several possible responses or actions the user could take next. Always explain your reasoning. Present your suggestions as a list of options or next steps.`
+  private currentProvider: "ollama" | "gemini" | "openrouter" = "gemini"
   private useOllama: boolean = false
   private ollamaModel: string = "llama3.2"
   private ollamaUrl: string = "http://localhost:11434"
+  private openRouterApiKey: string = ""
+  private openRouterModel: string = "google/gemma-4-31b-it:free"
 
-  constructor(apiKey?: string, useOllama: boolean = false, ollamaModel?: string, ollamaUrl?: string) {
+  constructor(apiKey?: string, useOllama: boolean = false, ollamaModel?: string, ollamaUrl?: string, openRouterApiKey?: string, openRouterModel?: string) {
     this.useOllama = useOllama
     
+    if (useOllama) {
+      this.currentProvider = "ollama"
+    } else if (openRouterApiKey) {
+      this.currentProvider = "openrouter"
+      this.openRouterApiKey = openRouterApiKey
+      if (openRouterModel) this.openRouterModel = openRouterModel
+      console.log(`[LLMHelper] Using OpenRouter with model: ${this.openRouterModel}`)
+    }
+
     if (useOllama) {
       this.ollamaUrl = ollamaUrl || "http://localhost:11434"
       this.ollamaModel = ollamaModel || "gemma:latest" // Default fallback
@@ -48,6 +60,48 @@ export class LLMHelper {
     // Remove any leading/trailing whitespace
     text = text.trim();
     return text;
+  }
+
+  private async callOpenRouter(prompt: string, images?: { data: string, mimeType: string }[]): Promise<string> {
+    try {
+      const messages: any[] = [
+        { role: "system", content: this.systemPrompt }
+      ];
+      
+      let content: any[] = [{ type: "text", text: prompt }];
+      if (images && images.length > 0) {
+        images.forEach(img => {
+          content.push({
+            type: "image_url",
+            image_url: { url: `data:${img.mimeType};base64,${img.data}` }
+          });
+        });
+      }
+      messages.push({ role: "user", content });
+
+      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${this.openRouterApiKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: this.openRouterModel,
+          messages,
+          temperature: 0.7,
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`OpenRouter API error: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      return data.choices?.[0]?.message?.content || "";
+    } catch (error: any) {
+      console.error("[LLMHelper] Error calling OpenRouter:", error);
+      throw new Error(`Failed to connect to OpenRouter: ${error.message}`);
+    }
   }
 
   private async callOllama(prompt: string): Promise<string> {
@@ -132,9 +186,19 @@ export class LLMHelper {
   "reasoning": "Explanation of why these suggestions are appropriate."
 }\nImportant: Return ONLY the JSON object, without any markdown formatting or code blocks.`
 
-      const result = await this.model.generateContent([prompt, ...imageParts])
-      const response = await result.response
-      const text = this.cleanJsonResponse(response.text())
+      let text = "";
+      if (this.currentProvider === "openrouter") {
+        const imageData = await Promise.all(imagePaths.map(async path => {
+           const d = await fs.promises.readFile(path);
+           return { data: d.toString("base64"), mimeType: "image/png" };
+        }));
+        text = await this.callOpenRouter(prompt, imageData);
+      } else {
+        const result = await this.model!.generateContent([prompt, ...imageParts])
+        const response = await result.response
+        text = response.text()
+      }
+      text = this.cleanJsonResponse(text)
       return JSON.parse(text)
     } catch (error) {
       console.error("Error extracting problem from images:", error)
@@ -153,12 +217,17 @@ export class LLMHelper {
   }
 }\nImportant: Return ONLY the JSON object, without any markdown formatting or code blocks.`
 
-    console.log("[LLMHelper] Calling Gemini LLM for solution...");
+    console.log(`[LLMHelper] Calling ${this.currentProvider} LLM for solution...`);
     try {
-      const result = await this.model.generateContent(prompt)
-      console.log("[LLMHelper] Gemini LLM returned result.");
-      const response = await result.response
-      const text = this.cleanJsonResponse(response.text())
+      let text = "";
+      if (this.currentProvider === "openrouter") {
+        text = await this.callOpenRouter(prompt);
+      } else {
+        const result = await this.model!.generateContent(prompt)
+        const response = await result.response
+        text = response.text()
+      }
+      text = this.cleanJsonResponse(text)
       const parsed = JSON.parse(text)
       console.log("[LLMHelper] Parsed LLM response:", parsed)
       return parsed
@@ -182,9 +251,19 @@ export class LLMHelper {
   }
 }\nImportant: Return ONLY the JSON object, without any markdown formatting or code blocks.`
 
-      const result = await this.model.generateContent([prompt, ...imageParts])
-      const response = await result.response
-      const text = this.cleanJsonResponse(response.text())
+      let text = "";
+      if (this.currentProvider === "openrouter") {
+        const imageData = await Promise.all(debugImagePaths.map(async path => {
+           const d = await fs.promises.readFile(path);
+           return { data: d.toString("base64"), mimeType: "image/png" };
+        }));
+        text = await this.callOpenRouter(prompt, imageData);
+      } else {
+        const result = await this.model!.generateContent([prompt, ...imageParts])
+        const response = await result.response
+        text = response.text()
+      }
+      text = this.cleanJsonResponse(text)
       const parsed = JSON.parse(text)
       console.log("[LLMHelper] Parsed debug LLM response:", parsed)
       return parsed
@@ -204,9 +283,14 @@ export class LLMHelper {
         }
       };
       const prompt = `${this.systemPrompt}\n\nDescribe this audio clip in a short, concise answer. In addition to your main answer, suggest several possible actions or responses the user could take next based on the audio. Do not return a structured JSON object, just answer naturally as you would to a user.`;
-      const result = await this.model.generateContent([prompt, audioPart]);
-      const response = await result.response;
-      const text = response.text();
+      let text = "";
+      if (this.currentProvider === "openrouter") {
+         throw new Error("Audio analysis not supported via OpenRouter yet.");
+      } else {
+         const result = await this.model!.generateContent([prompt, audioPart]);
+         const response = await result.response;
+         text = response.text();
+      }
       return { text, timestamp: Date.now() };
     } catch (error) {
       console.error("Error analyzing audio file:", error);
@@ -223,9 +307,14 @@ export class LLMHelper {
         }
       };
       const prompt = `${this.systemPrompt}\n\nDescribe this audio clip in a short, concise answer. In addition to your main answer, suggest several possible actions or responses the user could take next based on the audio. Do not return a structured JSON object, just answer naturally as you would to a user and be concise.`;
-      const result = await this.model.generateContent([prompt, audioPart]);
-      const response = await result.response;
-      const text = response.text();
+      let text = "";
+      if (this.currentProvider === "openrouter") {
+         throw new Error("Audio analysis not supported via OpenRouter yet.");
+      } else {
+         const result = await this.model!.generateContent([prompt, audioPart]);
+         const response = await result.response;
+         text = response.text();
+      }
       return { text, timestamp: Date.now() };
     } catch (error) {
       console.error("Error analyzing audio from base64:", error);
@@ -243,9 +332,15 @@ export class LLMHelper {
         }
       };
       const prompt = `${this.systemPrompt}\n\nDescribe the content of this image in a short, concise answer. In addition to your main answer, suggest several possible actions or responses the user could take next based on the image. Do not return a structured JSON object, just answer naturally as you would to a user. Be concise and brief.`;
-      const result = await this.model.generateContent([prompt, imagePart]);
-      const response = await result.response;
-      const text = response.text();
+      let text = "";
+      if (this.currentProvider === "openrouter") {
+        const d = await fs.promises.readFile(imagePath);
+        text = await this.callOpenRouter(prompt, [{ data: d.toString("base64"), mimeType: "image/png" }]);
+      } else {
+        const result = await this.model!.generateContent([prompt, imagePart]);
+        const response = await result.response;
+        text = response.text();
+      }
       return { text, timestamp: Date.now() };
     } catch (error) {
       console.error("Error analyzing image file:", error);
@@ -255,8 +350,10 @@ export class LLMHelper {
 
   public async chatWithGemini(message: string): Promise<string> {
     try {
-      if (this.useOllama) {
+      if (this.currentProvider === "ollama") {
         return this.callOllama(message);
+      } else if (this.currentProvider === "openrouter") {
+        return this.callOpenRouter(message);
       } else if (this.model) {
         const result = await this.model.generateContent(message);
         const response = await result.response;
@@ -293,15 +390,26 @@ export class LLMHelper {
     }
   }
 
-  public getCurrentProvider(): "ollama" | "gemini" {
-    return this.useOllama ? "ollama" : "gemini";
+  public getCurrentProvider(): "ollama" | "gemini" | "openrouter" {
+    return this.currentProvider;
   }
 
   public getCurrentModel(): string {
-    return this.useOllama ? this.ollamaModel : "gemini-2.0-flash";
+    if (this.currentProvider === "ollama") return this.ollamaModel;
+    if (this.currentProvider === "openrouter") return this.openRouterModel;
+    return "gemini-2.0-flash";
+  }
+
+  public async switchToOpenRouter(apiKey: string, model: string): Promise<void> {
+    this.currentProvider = "openrouter";
+    this.useOllama = false;
+    this.openRouterApiKey = apiKey;
+    if (model) this.openRouterModel = model;
+    console.log(`[LLMHelper] Switched to OpenRouter: ${this.openRouterModel}`);
   }
 
   public async switchToOllama(model?: string, url?: string): Promise<void> {
+    this.currentProvider = "ollama";
     this.useOllama = true;
     if (url) this.ollamaUrl = url;
     
@@ -325,13 +433,17 @@ export class LLMHelper {
       throw new Error("No Gemini API key provided and no existing model instance");
     }
     
+    this.currentProvider = "gemini";
     this.useOllama = false;
     console.log("[LLMHelper] Switched to Gemini");
   }
 
   public async testConnection(): Promise<{ success: boolean; error?: string }> {
     try {
-      if (this.useOllama) {
+      if (this.currentProvider === "openrouter") {
+         await this.callOpenRouter("Hello");
+         return { success: true };
+      } else if (this.currentProvider === "ollama") {
         const available = await this.checkOllamaAvailable();
         if (!available) {
           return { success: false, error: `Ollama not available at ${this.ollamaUrl}` };

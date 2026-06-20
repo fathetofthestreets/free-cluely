@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
 
 interface ModelConfig {
-  provider: "ollama" | "gemini";
+  provider: "ollama" | "gemini" | "openrouter";
   model: string;
   isOllama: boolean;
 }
 
 interface ModelSelectorProps {
-  onModelChange?: (provider: "ollama" | "gemini", model: string) => void;
+  onModelChange?: (provider: "ollama" | "gemini" | "openrouter", model: string) => void;
   onChatOpen?: () => void;
 }
 
@@ -18,7 +18,9 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onModelChange, onChatOpen
   const [connectionStatus, setConnectionStatus] = useState<'testing' | 'success' | 'error' | null>(null);
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [geminiApiKey, setGeminiApiKey] = useState('');
-  const [selectedProvider, setSelectedProvider] = useState<"ollama" | "gemini">("gemini");
+  const [openRouterApiKey, setOpenRouterApiKey] = useState('');
+  const [openRouterModel, setOpenRouterModel] = useState('google/gemma-4-31b-it:free');
+  const [selectedProvider, setSelectedProvider] = useState<"ollama" | "gemini" | "openrouter">("gemini");
   const [selectedOllamaModel, setSelectedOllamaModel] = useState<string>("");
   const [ollamaUrl, setOllamaUrl] = useState<string>("http://localhost:11434");
 
@@ -33,9 +35,11 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onModelChange, onChatOpen
       setCurrentConfig(config);
       setSelectedProvider(config.provider);
       
-      if (config.isOllama) {
+      if (config.provider === "ollama") {
         setSelectedOllamaModel(config.model);
         await loadOllamaModels();
+      } else if (config.provider === "openrouter") {
+        setOpenRouterModel(config.model);
       }
     } catch (error) {
       console.error('Error loading current config:', error);
@@ -80,6 +84,8 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onModelChange, onChatOpen
       
       if (selectedProvider === 'ollama') {
         result = await window.electronAPI.switchToOllama(selectedOllamaModel, ollamaUrl);
+      } else if (selectedProvider === 'openrouter') {
+        result = await window.electronAPI.switchToOpenRouter(openRouterApiKey, openRouterModel);
       } else {
         result = await window.electronAPI.switchToGemini(geminiApiKey || undefined);
       }
@@ -87,7 +93,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onModelChange, onChatOpen
       if (result.success) {
         await loadCurrentConfig();
         setConnectionStatus('success');
-        onModelChange?.(selectedProvider, selectedProvider === 'ollama' ? selectedOllamaModel : 'gemini-2.0-flash');
+        onModelChange?.(selectedProvider, selectedProvider === 'ollama' ? selectedOllamaModel : selectedProvider === 'openrouter' ? openRouterModel : 'gemini-2.0-flash');
         // Auto-open chat window after successful model change
         setTimeout(() => {
           onChatOpen?.();
@@ -140,7 +146,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onModelChange, onChatOpen
       {/* Current Status */}
       {currentConfig && (
         <div className="text-xs text-gray-600 bg-white/40 p-2 rounded">
-          Current: {currentConfig.provider === 'ollama' ? '🏠' : '☁️'} {currentConfig.model}
+          Current: {currentConfig.provider === 'ollama' ? '🏠' : currentConfig.provider === 'openrouter' ? '🌐' : '☁️'} {currentConfig.model}
         </div>
       )}
 
@@ -156,7 +162,17 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onModelChange, onChatOpen
                 : 'bg-white/40 text-gray-700 hover:bg-white/60'
             }`}
           >
-            ☁️ Gemini (Cloud)
+            ☁️ Gemini
+          </button>
+          <button
+            onClick={() => setSelectedProvider('openrouter')}
+            className={`flex-1 px-3 py-2 rounded text-xs transition-all ${
+              selectedProvider === 'openrouter'
+                ? 'bg-purple-500 text-white shadow-md'
+                : 'bg-white/40 text-gray-700 hover:bg-white/60'
+            }`}
+          >
+            🌐 OpenRouter
           </button>
           <button
             onClick={() => setSelectedProvider('ollama')}
@@ -166,7 +182,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onModelChange, onChatOpen
                 : 'bg-white/40 text-gray-700 hover:bg-white/60'
             }`}
           >
-            🏠 Ollama (Local)
+            🏠 Ollama
           </button>
         </div>
       </div>
@@ -182,6 +198,29 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onModelChange, onChatOpen
             onChange={(e) => setGeminiApiKey(e.target.value)}
             className="w-full px-3 py-2 text-xs bg-white/40 border border-white/60 rounded focus:outline-none focus:ring-2 focus:ring-blue-400/60"
           />
+        </div>
+      ) : selectedProvider === 'openrouter' ? (
+        <div className="space-y-2">
+          <div>
+            <label className="text-xs font-medium text-gray-700">OpenRouter API Key</label>
+            <input
+              type="password"
+              placeholder="Enter OpenRouter API key..."
+              value={openRouterApiKey}
+              onChange={(e) => setOpenRouterApiKey(e.target.value)}
+              className="w-full px-3 py-2 text-xs bg-white/40 border border-white/60 rounded focus:outline-none focus:ring-2 focus:ring-purple-400/60"
+            />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-gray-700">OpenRouter Model</label>
+            <input
+              type="text"
+              placeholder="e.g. google/gemma-4-31b-it:free"
+              value={openRouterModel}
+              onChange={(e) => setOpenRouterModel(e.target.value)}
+              className="w-full px-3 py-2 text-xs bg-white/40 border border-white/60 rounded focus:outline-none focus:ring-2 focus:ring-purple-400/60"
+            />
+          </div>
         </div>
       ) : (
         <div className="space-y-2">
@@ -250,6 +289,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onModelChange, onChatOpen
       {/* Help text */}
       <div className="text-xs text-gray-600 space-y-1">
         <div>💡 <strong>Gemini:</strong> Fast, cloud-based, requires API key</div>
+        <div>💡 <strong>OpenRouter:</strong> Cloud access to many models, requires API key</div>
         <div>💡 <strong>Ollama:</strong> Private, local, requires Ollama installation</div>
       </div>
     </div>
